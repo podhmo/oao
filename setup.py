@@ -16,6 +16,11 @@ install_requires = [
 
 docs_extras = []
 
+dev_extras = [
+    "mypy",
+    "mypy_extensions",
+]
+
 tests_require = []
 
 testing_extras = tests_require + []
@@ -40,6 +45,7 @@ setup(
     extras_require={
         'testing': testing_extras,
         'docs': docs_extras,
+        'dev': dev_extras,
     },
     tests_require=tests_require,
     test_suite="oao.tests",

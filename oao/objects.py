@@ -5,7 +5,7 @@ from .langhelpers import reify, is_optional, get_primitive_from_optional
 
 
 @singledispatch
-def guess_type(o):
+def guess_type(o):  # type: ignore
     raise TypeError(f"{o!r} is not supported")
 
 
@@ -13,20 +13,20 @@ guess_type.register(int, lambda o: "integer")
 guess_type.register(str, lambda o: "string")
 
 
-def get_resolver():
+def get_resolver() -> "Resolver":
     global DEFAULT_RESOLVER
     return DEFAULT_RESOLVER
 
 
 class XRefStrategy:
-    def __init__(self, lookup):
+    def __init__(self, lookup: "Lookup") -> None:
         self.lookup = lookup
 
 
 class Lookup:
-    def __init__(self, resolver):
+    def __init__(self, resolver: "Resolver") -> None:
         self.resolver = resolver
-        self._cache = {}
+        self._cache: t.Dict[t.Tuple[str, ...], "Member"] = {}
 
     def lookup(self, ns: "Namespace", query: str) -> t.Optional["Member"]:
         """query is /foo/bar/boo"""
@@ -47,22 +47,31 @@ class Lookup:
 
 
 class Resolver:
-    def __init__(self, xref_strategy_factory=None, lookup=None):
+    def __init__(
+        self,
+        xref_strategy_factory: t.Optional[t.Type[XRefStrategy]] = None,
+        lookup: t.Optional[Lookup] = None
+    ) -> None:
         self.lookup = lookup or Lookup(self)
-        self.xref_strategy = (xref_strategy_factory or XRefStrategy)(lookup)
+        self.xref_strategy = (xref_strategy_factory or XRefStrategy)(self.lookup)
 
     @reify
-    def _schema_ignore_props_set(self):
+    def _schema_ignore_props_set(self) -> t.Set[str]:
         return set(Object.__dict__.keys())
 
-    def resolve_name(self, cls):
+    def resolve_name(self, cls: "Member") -> str:
         return cls.get_name()
 
-    def resolve_description(self, cls):
+    def resolve_description(self, cls: t.Type) -> t.Optional[str]:
         return cls.__doc__
 
-    def resolve_object_properties(self, cls, *, history: t.Sequence["Member"]) -> t.Dict:
-        properties = {}
+    def resolve_object_properties(
+        self,
+        cls: t.Type,
+        *,
+        history: t.List["Member"],
+    ) -> t.Dict[str, t.Any]:
+        properties: t.Dict[str, t.Dict] = {}
         for target in cls.mro():
             for k, typ in t.get_type_hints(target).items():
                 if k in properties:
@@ -74,10 +83,15 @@ class Resolver:
                 properties[k] = self.resolve_field(typ, history=history)
         return properties
 
-    def resolve_array_items(self, cls, *, history: t.Sequence["Member"]) -> t.Dict:
+    def resolve_array_items(
+        self,
+        cls: t.Type,
+        *,
+        history: t.List["Member"],
+    ) -> t.Dict[str, t.Any]:
         return self.resolve_type(cls.items, history=history)
 
-    def resolve_field(self, v, *, history: t.Sequence["Member"]) -> t.Dict:
+    def resolve_field(self, v: t.Union[t.Type, t.Any], *, history: t.List["Member"]) -> t.Dict:
         required = True
         if is_optional(v):
             required = False
@@ -90,12 +104,12 @@ class Resolver:
         d["required"] = required
         return d
 
-    def resolve_type(self, v, *, history: t.Sequence["Member"]) -> t.Dict:
+    def resolve_type(self, v: t.Any, *, history: t.List["Member"]) -> t.Dict:
         if not is_schema(v):
             v = v()  # str or int or ...
-            return guess_type(v)
+            return guess_type(v)  # type: ignore
 
-        ref = getattr(v, "_ref", None)  # xxx
+        ref: t.Optional[Ref] = getattr(v, "_ref", None)  # xxx
         if ref:
             return ref.as_dict(resolver=self, history=history)
 
@@ -108,10 +122,12 @@ class Resolver:
         return ref.as_dict(resolver=self, history=history)
 
 
-DEFAULT_RESOLVER = Resolver()
+DEFAULT_RESOLVER: Resolver = Resolver()
 
 
 class Member(tx.Protocol):
+    _ref: t.Optional["Ref"]
+
     def get_name(self) -> str:
         ...
 
@@ -122,18 +138,18 @@ class Member(tx.Protocol):
         self,
         *,
         resolver: t.Optional[Resolver] = None,
-        history: t.Sequence["Member"] = None,
+        history: t.Optional[t.List["Member"]] = None,
     ) -> t.Dict:
         ...
 
 
 class Ref:
-    def __init__(self, o: Member, ns_list: t.Sequence[Member]) -> None:
+    def __init__(self, o: Member, ns_list: t.List[Member]) -> None:
         self.o = o
         self.ns_list = ns_list
 
     @reify
-    def fullpath(self):
+    def fullpath(self) -> str:
         nodes = [*self.ns_list, self.o]
         return "#/" + "/".join([m.get_name() for m in nodes])
 
@@ -141,31 +157,33 @@ class Ref:
         self,
         *,
         resolver: t.Optional[Resolver] = None,
-        history: t.Sequence[Member] = None,
+        history: t.List[Member],
     ) -> t.Dict:
         return {"$ref": self.fullpath}
 
 
 class Object:
+    _ref: t.Optional["Ref"]
+
     @classmethod
     def get_name(cls) -> str:
         return cls.__name__
 
     @classmethod
     def on_mount(cls, ns: "Namespace") -> "Member":
-        return cls
+        return t.cast("Member", cls)
 
     @classmethod
     def as_dict(
         cls,
         *,
         resolver: t.Optional[Resolver] = None,
-        history: t.Sequence[Member] = None,
+        history: t.Optional[t.List[Member]] = None,
     ) -> t.Dict:
         r = resolver or get_resolver()
-        h = (history or []) + [cls]
+        h = (history or []) + [t.cast(Member, cls)]
 
-        d = {}
+        d: t.Dict[str, t.Any] = {}
         d["type"] = "object"
 
         description = r.resolve_description(cls)
@@ -185,7 +203,7 @@ class Object:
 
 
 class _Alias:
-    def __init__(self, o: Member, *, name: str):
+    def __init__(self, o: Member, *, name: str) -> None:
         self.o = o
         self.name = name
 
@@ -197,6 +215,9 @@ class _Alias:
 
 
 class Array:
+    _ref: t.Optional["Ref"]
+    items: t.ClassVar["Member"]
+
     @classmethod
     def get_name(cls) -> str:
         return cls.__name__
@@ -205,19 +226,19 @@ class Array:
     def on_mount(cls, ns: "Namespace") -> "Member":
         if cls.items not in ns:
             ns.mount(cls.items)
-        return cls
+        return t.cast(Member, cls)
 
     @classmethod
     def as_dict(
         cls,
         *,
         resolver: t.Optional[Resolver] = None,
-        history: t.Sequence[Member] = None,
+        history: t.Optional[t.List[Member]] = None,
     ) -> t.Dict:
         r = resolver or get_resolver()
-        h = (history or []) + [cls]
+        h = (history or []) + [t.cast(Member, cls)]
 
-        d = {}
+        d: t.Dict[str, t.Any] = {}
         d["type"] = "array"
 
         description = r.resolve_description(cls)
@@ -228,10 +249,18 @@ class Array:
         return d
 
 
-class Namespace:
-    name: str
+Tn = t.TypeVar("Tn", bound="Namespace")
 
-    def __init__(self, name: str, ns=None) -> None:
+
+class Namespace(t.Generic[Tn]):
+    _ref: t.Optional["Ref"]
+
+    name: str
+    members: t.List[Member]
+    _seen: t.Set[Member]
+    children: t.Dict[str, Tn]
+
+    def __init__(self, name: str, ns: t.Optional["Namespace"] = None) -> None:
         self.name = name
         self.members = []
         self._seen = set()
@@ -240,7 +269,7 @@ class Namespace:
         if ns is not None:
             ns.mount(self)
 
-    def __contains__(self, schema):
+    def __contains__(self, schema: Member) -> bool:
         if schema in self._seen:
             return True
         for ns in self.children.values():
@@ -252,14 +281,14 @@ class Namespace:
         return self.name
 
     def on_mount(self, ns: "Namespace") -> "Member":
-        copied = self.__class__(self.name, ns=None)
+        copied: Tn = self.__class__(self.name, ns=None)
         copied.ns = ns
         copied.members = self.members
         copied._seen = self._seen
         copied.children = self.children
         return copied
 
-    def mount(self, member: t.Any, *, force=False, name=None) -> None:
+    def mount(self, member: Member, *, force: bool = False, name: t.Optional[str] = None) -> None:
         if member in self._seen:
             return
         if name is not None:
@@ -267,37 +296,38 @@ class Namespace:
         self._seen.add(member)
         self.members.append(member.on_mount(self))
         if is_namespace(member):
-            self.children[member.get_name()] = member
+            # todo: need guard
+            self.children[member.get_name()] = t.cast(Tn, member)
 
-    def namespace(self, name) -> "Namespace":  # todo: subtyping(type definition)
+    def namespace(self, name: str) -> Tn:
         ns = self.children.get(name)
         if ns is not None:
             return ns
-        return self.__class__(name, ns=self)
+        return t.cast(Tn, self.__class__(name, ns=self))
 
-    def __enter__(self):
+    def __enter__(self) -> "Namespace":
         return self
 
-    def __exit__(self, typ, val, tb):
+    def __exit__(self, typ, val, tb):  # type: ignore
         pass
 
     def as_dict(
         self,
         *,
         resolver: t.Optional[Resolver] = None,
-        history: t.Sequence[Member] = None,
+        history: t.Optional[t.List[Member]] = None,
     ) -> t.Dict:
         r = resolver or get_resolver()
-        history = (history or []) + [self]
+        history = (history or []) + [t.cast(Member, self)]
         d = {r.resolve_name(m): m.as_dict(resolver=r, history=history) for m in self.members}
         if self.ns is not None:
             return d
         return {self.name: d}
 
 
-def is_namespace(ns) -> bool:
+def is_namespace(ns: object) -> bool:
     return hasattr(ns, "mount")
 
 
-def is_schema(v):
+def is_schema(v: object) -> bool:
     return hasattr(v, "as_dict")

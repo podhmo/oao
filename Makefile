@@ -1,0 +1,2 @@
+typecheck:
+	mypy --strict oao
