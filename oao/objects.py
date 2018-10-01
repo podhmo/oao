@@ -1,21 +1,7 @@
 import typing as t
 import typing_extensions as tx
-from functools import singledispatch
-from .langhelpers import reify, is_optional, get_primitive_from_optional
-
-
-@singledispatch
-def guess_type(o):  # type: ignore
-    raise TypeError(f"{o!r} is not supported")
-
-
-guess_type.register(int, lambda o: "integer")
-guess_type.register(str, lambda o: "string")
-
-
-def get_resolver() -> "Resolver":
-    global DEFAULT_RESOLVER
-    return DEFAULT_RESOLVER
+from .langhelpers import reify, is_optional, get_primitive_from_optional, is_union
+from .guess import guess_type
 
 
 class XRefStrategy:
@@ -44,6 +30,11 @@ class Lookup:
                 self._cache[path] = m
                 return m
         return None
+
+
+def get_resolver() -> "Resolver":
+    global DEFAULT_RESOLVER
+    return DEFAULT_RESOLVER
 
 
 class Resolver:
@@ -97,37 +88,36 @@ class Resolver:
             required = False
             v = get_primitive_from_optional(v)
 
-        if is_schema(v):
-            d = self.resolve_type(v, history=history)
-        else:
-            d = {"type": self.resolve_type(v, history=history)}
+        d = self.resolve_type(v, history=history)
         d["required"] = required
         return d
 
     def resolve_type(self, v: t.Any, *, history: t.List["Member"]) -> t.Dict:
-        if not is_schema(v):
-            v = v()  # str or int or ...
+        # oneOf,schema,primitive (TODO: other)
+        try:
             return guess_type(v)  # type: ignore
+        except TypeError:
+            ns_list = [m for m in history if is_namespace(m)]
 
-        ref: t.Optional[Ref] = getattr(v, "_ref", None)
-        if ref:
-            return ref.as_dict(resolver=self, history=history)
-
-        ns_list = []
-        for m in history:
-            if is_namespace(m):
-                ns_list.append(m)
-        ref = Ref(v, ns_list=ns_list)
-        v._ref = ref  # cache
-        return ref.as_dict(resolver=self, history=history)
+            if is_schema(v):  # schema
+                ref = Ref(v, ns_list=ns_list)
+                mapped = ref.as_dict(resolver=self, history=history)
+                guess_type.register(v, mapped)
+                return mapped
+            elif is_union(v):  # oneOf
+                # todo: disciminator
+                refs = [Ref(x, ns_list=ns_list) for x in v.__args__]
+                mapped = {"oneOf": [ref.as_dict(resolver=self, history=history) for ref in refs]}
+                guess_type.register(v, mapped)
+                return mapped
+            else:
+                raise
 
 
 DEFAULT_RESOLVER = Resolver()
 
 
 class Member(tx.Protocol):
-    _ref: t.Optional["Ref"]
-
     def get_name(self) -> str:
         ...
 
@@ -163,14 +153,18 @@ class Ref:
 
 
 class Object:
-    _ref: t.Optional["Ref"]
-
     @classmethod
     def get_name(cls) -> str:
         return cls.__name__
 
     @classmethod
     def on_mount(cls, ns: "Namespace") -> "Member":
+        for name, typ in t.get_type_hints(cls).items():
+            if is_schema(typ):
+                ns.mount(typ)
+            elif is_union(typ):  # oneOf
+                for x in typ.__args__:
+                    ns.mount(x)
         return t.cast("Member", cls)
 
     @classmethod
@@ -215,7 +209,6 @@ class _Alias:
 
 
 class Array:
-    _ref: t.Optional["Ref"]
     items: t.ClassVar["Member"]
 
     @classmethod
@@ -225,7 +218,8 @@ class Array:
     @classmethod
     def on_mount(cls, ns: "Namespace") -> "Member":
         if cls.items not in ns:
-            ns.mount(cls.items)
+            if hasattr(cls.items, "on_mount"):
+                ns.mount(cls.items.on_mount(ns))
         return t.cast(Member, cls)
 
     @classmethod
@@ -253,8 +247,6 @@ Tn = t.TypeVar("Tn", bound="Namespace")
 
 
 class Namespace(t.Generic[Tn]):
-    _ref: t.Optional["Ref"]
-
     name: str
     members: t.List[Member]
     _seen: t.Set[Member]

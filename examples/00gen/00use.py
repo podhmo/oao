@@ -1,5 +1,5 @@
 import json
-from oao import Namespace, Object, Array, get_resolver
+from oao import Namespace, Object, Array
 
 
 class Person(Object):
@@ -22,7 +22,6 @@ class People(Array):
 with Namespace("components") as components:
     with components.namespace("schemas") as schemas:
         # schemas.mount(Person)
-        schemas.mount(People)
+        # schemas.mount(People)
         schemas.mount(XPerson)
-    assert get_resolver().lookup.lookup(components, "schemas/Person") is not None
     print(json.dumps(components.as_dict(), indent=2))
