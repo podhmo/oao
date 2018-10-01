@@ -109,7 +109,7 @@ class Resolver:
             v = v()  # str or int or ...
             return guess_type(v)  # type: ignore
 
-        ref: t.Optional[Ref] = getattr(v, "_ref", None)  # xxx
+        ref: t.Optional[Ref] = getattr(v, "_ref", None)
         if ref:
             return ref.as_dict(resolver=self, history=history)
 
@@ -118,11 +118,11 @@ class Resolver:
             if is_namespace(m):
                 ns_list.append(m)
         ref = Ref(v, ns_list=ns_list)
-        v._ref = ref  # xxx: cache
+        v._ref = ref  # cache
         return ref.as_dict(resolver=self, history=history)
 
 
-DEFAULT_RESOLVER: Resolver = Resolver()
+DEFAULT_RESOLVER = Resolver()
 
 
 class Member(tx.Protocol):
