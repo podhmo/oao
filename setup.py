@@ -1,5 +1,4 @@
 import os
-import sys
 
 from setuptools import setup, find_packages
 here = os.path.abspath(os.path.dirname(__file__))
@@ -11,7 +10,9 @@ try:
 except IOError:
     README = CHANGES = ''
 
-install_requires = []
+install_requires = [
+    "typing_extensions",
+]
 
 docs_extras = []
 

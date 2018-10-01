@@ -1,4 +1,7 @@
-# -*- coding:utf-8 -*-
-import logging
-logger = logging.getLogger(__name__)
-
+from oao.objects import (  # noqa
+    Namespace,
+    Array,
+    Object,
+    Ref,
+    get_resolver,
+)
